@@ -73,13 +73,25 @@ func (c *ExpandCmd) Run(args []string) error {
 	expanded := src
 	{
 		// quoted form: $(key) => "value"
-		re := regexp.MustCompile(`(?i)\$\([a-z_\.]+\)`)
+		re := regexp.MustCompile(`\$\([[:alnum:]_\.\-]+\)`)
 		expandFunction := func(match []byte) []byte {
 			if match[0] != '$' || match[1] != '(' || match[len(match)-1] != ')' {
 				glog.Fatalf("unexpected match: %q", string(match))
 			}
-			key := string(match[2 : len(match)-1])
-			replacement := values[key]
+
+			var key string
+			var replacement interface{}
+			re64 := regexp.MustCompile(`base64\([:alnum:_\.\-]+\)`)
+			if re64.Match(match[2 : len(match)-1]) {
+				key = string(match[7 : len(match)-2])
+				if v, ok := values[key]; ok{
+					replacement = base64.StdEncoding.EncodeToString([]byte(v.(string)))
+				}
+			}else {
+				key = string(match[2 : len(match)-1])
+				replacement = values[key]
+			}
+
 			if replacement == nil {
 				err = fmt.Errorf("key not found: %q", key)
 				return match
@@ -95,31 +107,8 @@ func (c *ExpandCmd) Run(args []string) error {
 	}
 
 	{
-		// base64 quoted form: ${key} => "value"
-		re := regexp.MustCompile(`(?i)\$\{[a-z_\.]+\}`)
-		expandFunction := func(match []byte) []byte {
-			if match[0] != '$' || match[1] != '{' || match[len(match)-1] != '}' {
-				glog.Fatalf("unexpected match: %q", string(match))
-			}
-			key := string(match[2 : len(match)-1])
-			replacement := values[key]
-			if replacement == nil {
-				err = fmt.Errorf("key not found: %q", key)
-				return match
-			}
-			s := fmt.Sprintf("\"%v\"", base64.StdEncoding.EncodeToString([]byte(replacement.(string))))
-			return []byte(s)
-		}
-
-		expanded = re.ReplaceAllFunc(expanded, expandFunction)
-		if err != nil {
-			return err
-		}
-	}
-
-	{
 		// unquoted form: $((key)) => value
-		re := regexp.MustCompile(`(?i)\$\(\([a-z_\.]+\)\)`)
+		re := regexp.MustCompile(`\$\(\([[:alnum:]_\.\-]+\)\)`)
 		expandFunction := func(match []byte) []byte {
 			if match[0] != '$' || match[1] != '(' || match[2] != '(' || match[len(match)-1] != ')' || match[len(match)-2] != ')' {
 				glog.Fatalf("unexpected match: %q", string(match))
@@ -141,32 +130,9 @@ func (c *ExpandCmd) Run(args []string) error {
 	}
 
 	{
-		// base64 unquoted form: ${{key}} => base64 encode value
-		re := regexp.MustCompile(`(?i)\$\{\{[a-z_\.]+\}\}`)
-		expandFunction := func(match []byte) []byte {
-			if match[0] != '$' || match[1] != '{' || match[2] != '{' || match[len(match)-1] != '}' || match[len(match)-2] != '}' {
-				glog.Fatalf("unexpected match: %q", string(match))
-			}
-			key := string(match[3 : len(match)-2])
-			replacement := values[key]
-			if replacement == nil {
-				err = fmt.Errorf("key not found: %q", key)
-				return match
-			}
-			s := fmt.Sprintf("%v", base64.StdEncoding.EncodeToString([]byte(replacement.(string))))
-			return []byte(s)
-		}
-
-		expanded = re.ReplaceAllFunc(expanded, expandFunction)
-		if err != nil {
-			return err
-		}
-	}
-
-	{
 		// legacy form: {{key}} => value
 
-		re := regexp.MustCompile(`\{\{[a-z_\.]+\}\}`)
+		re := regexp.MustCompile(`\{\{[[:alnum:]_\.\-]+\}\}`)
 		expandFunction := func(match []byte) []byte {
 			if match[0] != '{' || match[1] != '{' || match[len(match)-1] != '}' || match[len(match)-2] != '}' {
 				glog.Fatalf("unexpected match: %q", string(match))
